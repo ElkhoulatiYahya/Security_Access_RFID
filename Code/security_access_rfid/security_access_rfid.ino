@@ -1,56 +1,66 @@
-#include "DHT.h"
-#include <Wire.h>         // Bibliothèque pour la communication I2C
-#include <LiquidCrystal_I2C.h> // Bibliothèque pour l'écran LCD i2C
+#include <SPI.h>
+#include <MFRC522.h>
 
-// Configuration du capteur DHT11
-#define DHTPIN 2          // Pin connectée à la broche DATA du capteur
-#define DHTTYPE DHT11     // Type de capteur : DHT11
+#define SS_PIN 10
+#define RST_PIN 9
 
-DHT dht(DHTPIN, DHTTYPE); // Initialisation de l'objet DHT
-
-// Configuration de l'écran LCD (adresse i2C, colonnes, lignes)
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+MFRC522 mfrc522(SS_PIN, RST_PIN); // Create MFRC522 instance.
 
 void setup() {
-  Serial.begin(9600);      // Initialisation de la communication série
-  dht.begin();             // Initialisation du capteur DHT11
-  lcd.init();              // Initialisation de l'écran LCD
-  lcd.backlight();         // Activer le rétroéclairage de l'écran
-  lcd.setCursor(0, 0);     // Positionnement du curseur sur la première ligne
-  lcd.print("Initialisation"); 
-  delay(2000);             // Pause pour afficher le message d'accueil
-  lcd.clear();             // Efface l'écran avant le début des mesures
+  Serial.begin(9600);
+  while (!Serial); // attendre l'ouverture du moniteur série (utile sur certains boards)
+  SPI.begin();     // Init SPI bus
+  mfrc522.PCD_Init(); // Init MFRC522
+  Serial.println("Approximate your card to the reader...");
+  Serial.println();
 }
 
 void loop() {
-  // Lecture des données du capteur
-  float temp = dht.readTemperature(); // Lecture de la température en Celsius
-  float hum = dht.readHumidity();     // Lecture de l'humidité en %
-
-  // Vérification des erreurs
-  if (isnan(temp) || isnan(hum)) {
-    Serial.println("Erreur : Données invalides du capteur !");
-    lcd.setCursor(0, 0);
-    lcd.print("Erreur capteur !");
-    lcd.setCursor(0, 1);
-    lcd.print("Verifiez liaison");
-  } else {
-    // Affichage des mesures sur le Moniteur Série
-    Serial.println("Température : " + String(temp) + " °C");
-    Serial.println("Humidité : " + String(hum) + " %");
-
-    // Affichage des mesures sur l'écran LCD
-    lcd.setCursor(0, 0); // Position sur la première ligne
-    lcd.print("Temp: ");
-    lcd.print(temp);
-    lcd.print(" C");
-    lcd.setCursor(0, 1); // Position sur la deuxième ligne
-    lcd.print("Hum: ");
-    lcd.print(hum);
-    lcd.print(" %");
+  // Look for new cards
+  if (! mfrc522.PICC_IsNewCardPresent()) {
+    return;
   }
 
-  // Pause de 10 secondes avant la prochaine lecture
-  delay(10000);
-}
+  // Select one of the cards
+  if (! mfrc522.PICC_ReadCardSerial()) {
+    return;
+  }
 
+  // Construire l'UID sous forme "BD 31 15 2B" (2 hex par octet, majuscules, séparés par espaces)
+  String uidStr = "";
+  for (byte i = 0; i < mfrc522.uid.size; i++) {
+    if (mfrc522.uid.uidByte[i] < 0x10) uidStr += "0"; // leading zero si nécessaire
+    uidStr += String(mfrc522.uid.uidByte[i], HEX);
+    if (i < mfrc522.uid.size - 1) uidStr += " ";
+  }
+  uidStr.toUpperCase();
+
+  Serial.print("UID tag : ");
+  Serial.println(uidStr);
+
+  // Liste des UID autorisés (tu peux en ajouter d'autres)
+  // Exemple : "BD 31 15 2B"
+  const char* allowedUIDs[] = {
+    "BD 31 15 2B",
+    // "AA BB CC DD", // autre UID
+  };
+  const size_t allowedCount = sizeof(allowedUIDs) / sizeof(allowedUIDs[0]);
+
+  bool authorized = false;
+  for (size_t k = 0; k < allowedCount; ++k) {
+    if (uidStr == String(allowedUIDs[k])) {
+      authorized = true;
+      break;
+    }
+  }
+
+  if (authorized) {
+    Serial.println("Authorized access");
+    // ici : actions supplémentaires (ex: ouvrir relais)
+  } else {
+    Serial.println("Access denied");
+  }
+
+  Serial.println();
+  delay(3000); // délai pour éviter multiple lectures rapides
+}
